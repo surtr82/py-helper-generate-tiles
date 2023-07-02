@@ -67,12 +67,21 @@ def removeDeadImage(filePath):
         os.remove(filePath)
 
 
-def isDeadImage(filePath):
+def isDeadImage(filePath):    
     img = cv2.imread(filePath)
-    width = img.shape[0] - 1
-    height = img.shape[1] - 1
-    pixelsum = sum(img[0,0]) + sum(img[width, 0])  + sum(img[0, height]) + sum(img[width, height])
-    return (pixelsum == 0)
+    borderWidth = 1
+    width = img.shape[0] - 1 - borderWidth
+    height = img.shape[1] - 1- borderWidth
+    deadPixels = 0
+    if (sum(img[borderWidth,borderWidth]) == 0):
+        deadPixels = deadPixels + 1
+    if (sum(img[width, borderWidth]) == 0):
+        deadPixels = deadPixels + 1
+    if (sum(img[borderWidth, height]) == 0):
+        deadPixels = deadPixels + 1        
+    if (sum(img[width, height]) == 0):
+        deadPixels = deadPixels + 1        
+    return (deadPixels >= 2)
 
 
 def splitCoordinates(coordinates):
@@ -89,7 +98,7 @@ def main():
     inputKml = config['DIRECTORY']['input_kml']
     output = config['DIRECTORY']['output']
     outputSuffix = config['DIRECTORY']['outputSuffix']
-    extendLatitude = float(config['TILE']['extend_latitude'])
+    extendLatitude = float(config['TILE']['extend_latitude']) 
     extendLongitude = float(config['TILE']['extend_longitude'])
 
     geotiffsFilepaths = getListOfFiles(inputGeotiff)
