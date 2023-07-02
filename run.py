@@ -2,10 +2,12 @@ import configparser
 import cv2
 import ntpath
 import os
+import pandas as pd
 from pykml import parser
 import rasterio
 from rasterio.mask import mask
 from shapely import geometry
+import shutil
 
 
 def loadConfigFile(filepath='config.ini'):
@@ -21,7 +23,8 @@ def createConfigFile(filepath):
         config['DIRECTORY'] = {
             'input_geotiff': 'input/geotiff',
             'input_kml': 'input/kml',
-            'output': 'output',
+            'output_all': 'output/all',
+            'output_laplacian': 'output/laplacian',
             'outputSuffix': 'Map'}
         config['TILE'] = {
             'extend_latitude': '0.00435',
@@ -92,11 +95,10 @@ def splitCoordinates(coordinates):
     return float(longitude), float(latitude)
 
 
-def main():
-    config = loadConfigFile()    
+def generateTilesForEachGeoTiff(config):
     inputGeotiff = config['DIRECTORY']['input_geotiff']
     inputKml = config['DIRECTORY']['input_kml']
-    output = config['DIRECTORY']['output']
+    output_all = config['DIRECTORY']['output_all']
     outputSuffix = config['DIRECTORY']['outputSuffix']
     extendLatitude = float(config['TILE']['extend_latitude']) 
     extendLongitude = float(config['TILE']['extend_longitude'])
@@ -123,13 +125,69 @@ def main():
                             coordinates = '[{:.4f}'.format(latitude) + ', ' + '{:.4f}'.format(longitude) + ']'
 
                             outputFilename = outputSuffix + ' ' + coordinates + ' ' + geotiffName + '.tif'
-                            outputFilepath = os.path.join(output, outputFilename)
+                            outputFilepath = os.path.join(output_all, outputFilename)
 
                             try:
                                 saveCroppedGeoTIFF(img, box, outputFilepath)
                                 print(coordinates + ' extracted ' + geotiffName)
                             except:
                                 print(coordinates + ' not found ' + geotiffName)
+
+
+def selectTilesByLaplacianVariance(config):
+    output_all = config['DIRECTORY']['output_all']
+    output_laplacian = config['DIRECTORY']['output_laplacian']
+    inputFilepaths = getListOfFiles(output_all)
+
+    df = pd.DataFrame(inputFilepaths, columns=['Filepath'])
+
+    def appendColumnLatitude(row):
+        filepath = row['Filepath']
+        filename = os.path.splitext(ntpath.basename(filepath))[0]
+        return filename[5:12]
+    df['Latitude'] = df.apply(appendColumnLatitude, axis=1)
+    
+    def appendColumnLongitude(row):
+        filepath = row['Filepath']
+        filename = os.path.splitext(ntpath.basename(filepath))[0]
+        return filename[14:21]
+    df['Longitude'] = df.apply(appendColumnLongitude, axis=1)
+    
+    def appendColumnMission(row):
+        filepath = row['Filepath']
+        filename = os.path.splitext(ntpath.basename(filepath))[0]
+        return filename[24:len(filename)-1]
+    df['Mission'] = df.apply(appendColumnMission, axis=1)
+
+    def appendLaplacianVariance(row):
+        filepath = row['Filepath']
+        img = cv2.imread(filepath)
+        return cv2.Laplacian(img, cv2.CV_64F).var()
+    df['Laplacian'] = df.apply(appendLaplacianVariance, axis=1)
+
+    df_tiles = df.groupby(by=['Latitude', 'Longitude']).aggregate({'Mission': 'count'}).reset_index()    
+    for index, row in df_tiles.iterrows():
+        # Select all tiles for certain coordinate
+        tile_rows = df[(df['Latitude'] == row['Latitude']) & (df['Longitude'] == row['Longitude'])]
+
+        # Copy tile with max laplacian variance
+        max_laplacian = max(tile_rows['Laplacian'])
+        max_laplacian_rows = tile_rows[(tile_rows['Laplacian'] == max_laplacian)]
+
+        filepath = max_laplacian_rows['Filepath'].iloc[0]
+        latitude = max_laplacian_rows['Latitude'].iloc[0]
+        longitude = max_laplacian_rows['Longitude'].iloc[0]
+
+        fileName = 'Map ['+ latitude + ', ' + longitude + '].tif'
+        outputFilepath = os.path.join(output_laplacian, fileName)
+        shutil.copyfile(filepath, outputFilepath)
+        print(outputFilepath)
+
+
+def main():
+    config = loadConfigFile()    
+    generateTilesForEachGeoTiff(config)
+    selectTilesByLaplacianVariance(config)
 
 
 if __name__ == '__main__':  
